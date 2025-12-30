@@ -1,15 +1,14 @@
-
 export enum GameState {
-  START = 'START',
-  PLAYING = 'PLAYING',
-  UPGRADING = 'UPGRADING',
-  FINISHED = 'FINISHED'
+  START = "START",
+  PLAYING = "PLAYING",
+  UPGRADING = "UPGRADING",
+  FINISHED = "FINISHED"
 }
 
 export enum Difficulty {
-  EASY = 'EASY',
-  NORMAL = 'NORMAL',
-  HARD = 'HARD'
+  EASY = "EASY",
+  NORMAL = "NORMAL",
+  HARD = "HARD"
 }
 
 export interface PlayerStats {
@@ -30,16 +29,17 @@ export interface Entity {
   y: number;
   width: number;
   height: number;
-  type: 'CHEST' | 'GATE_POS' | 'GATE_NEG' | 'WALL' | 'ENEMY' | 'LOOT' | 'BOSS';
+  type: "CHEST" | "GATE_POS" | "GATE_NEG" | "WALL" | "ENEMY" | "LOOT" | "BOSS";
   health?: number;
   maxHealth?: number;
   rewardXp?: number; // 击杀奖励经验
   value?: number;
-  statType?: 'fireRate' | 'damage' | 'projectileCount';
+  statType?: "fireRate" | "damage" | "projectileCount";
   label?: string;
   speed?: number;
   pairId?: string; // 用于识别成对出现的门
   tier?: number; // 敌人阶级：1-5
+  evolutionSpeed?: number; // 门数值进化每枪增量
 }
 
 export interface Bullet {
