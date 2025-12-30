@@ -73,14 +73,9 @@ const App: React.FC = () => {
   const handleStatChange = useCallback((stat: keyof PlayerStats, amount: number) => {
     setStats(prev => {
       let newValue = prev[stat] as number;
-      if (stat === 'damage' || stat === 'fireRate') {
-        // 门提供的百分比收益（amount 是小数，如 0.05 表示 +5%）
-        // 计算公式：当前值 * (1 + 加成比例)
-        newValue = newValue * (1 + amount);
-      } else {
-        // HP, XP 等属性保持累加逻辑
-        newValue += amount;
-      }
+      // 核心修改：改为加法逻辑，避免指数级膨胀
+      // 此时 amount 已经是处理过的具体数值（例如 +10, +0.5），直接累加即可
+      newValue += amount;
 
       // 最小值限制与数值修正
       if (stat === 'fireRate') newValue = Math.max(1, newValue);

@@ -62,16 +62,17 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
     hitGateIdsThisFrame: new Set<string>(),
     invincibilityFrames: 0,
     damageFlash: 0,
-    lastChestSpawnTime: 0, 
+    lastChestSpawnTime: 0,
+    gateLastHitTime: new Map<string, number>() 
   });
 
   const mousePosRef = useRef({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 120 });
 
   const getDifficultyFactor = () => {
     switch (difficulty) {
-      case Difficulty.EASY: return 0.4;
+      case Difficulty.EASY: return 0.6;
       case Difficulty.NORMAL: return 1.0;
-      case Difficulty.HARD: return 2.8;
+      case Difficulty.HARD: return 1.5;
       default: return 1.0;
     }
   };
@@ -80,19 +81,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
    * 核心修改：重新规划门的增长速度比例
    * 使用平滑曲线防止高难度下进化停滞
    */
-  const getGateEvolutionRate = () => {
-    // 核心数值调整：
-    // 由于修改了判定逻辑（从"每颗子弹触发"改为"每帧触发"），这里的基础数值需要大幅降低
-    // 原值 0.015 对应单发子弹增量
-    // 新值 0.003 对应单帧最大增量 (60FPS下，每秒最快与门互动60次，即每秒约增加 18%)
-    // 这样保证了即使后期射速极快，门的增长速度也有一个合理的物理上限
-    const baseRate = 0.003; 
-    const factor = getDifficultyFactor();
-    
-    // 依然保留难度平滑逻辑，但在新基准下重新生效
-    const dampenedFactor = factor > 1 ? 1 + (factor - 1) * 0.35 : 1 - (1 - factor) * 0.3;
-    return baseRate / dampenedFactor;
-  };
+
 
   useEffect(() => {
     if (gameState === GameState.PLAYING) {
@@ -116,6 +105,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
         invincibilityFrames: 0,
         damageFlash: 0,
         lastChestSpawnTime: performance.now(),
+        gateLastHitTime: new Map(),
       };
       mousePosRef.current = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 120 };
       spawnEntities(400, true);
@@ -134,8 +124,17 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
     state.isHordeMode = false;
     state.entities = state.entities.filter(e => e.type === 'LOOT');
     
-    const baseHp = 1500 + statsRef.current.level * 400;
-    const hp = Math.floor(baseHp * (1 + state.distanceTraveled / 100000) * getDifficultyFactor());
+    // 核心重构：Boss血量基于距离的平方增长 (Quadratic Scaling)
+    // 依据：玩家DPS通常呈指数或高阶多项式增长 (FireRate线性 * Damage线性 = DPS二次方)
+    // Goal: 3分钟(45k距离)约40k血量; 10分钟(150k距离)约450k血量
+    const distFactor = Math.max(0, state.distanceTraveled);
+    const difficultyMult = difficulty === Difficulty.HARD ? 1.5 : (difficulty === Difficulty.EASY ? 0.6 : 1.0);
+    
+    const baseBossHp = 3000 * difficultyMult;
+    // 系数 ~20 用于匹配 (Distance/1000)^2
+    const scalingHp = 20 * Math.pow(distFactor / 1000, 2) * difficultyMult;
+    
+    const hp = Math.floor(baseBossHp + scalingHp);
     
     const boss: Entity = {
       id: `boss-${Date.now()}`,
@@ -156,9 +155,43 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
   const generateRandomGate = (side: 'left' | 'right', y: number, pairId?: string): Entity => {
     const statTypes: ('fireRate' | 'damage')[] = ['fireRate', 'damage'];
     const stat = statTypes[Math.floor(Math.random() * statTypes.length)];
+    // 核心重构：Gate数值由距离线性决定 (Additive Growth)
+    // 不再根据玩家当前属性计算，切断滚雪球链路
+    const dist = Math.max(0, stateRef.current.distanceTraveled);
+    const diffFactor = difficulty === Difficulty.HARD ? 1.5 : (difficulty === Difficulty.EASY ? 0.6 : 1.0);
     
-    // 初始负向百分比：-12% 到 -5% 之间
-    const initialPct = -(0.05 + Math.random() * 0.07);
+    let baseVal = 0;
+    let growthVal = 0;
+
+    if (stat === 'damage') {
+       // 攻击力：基础 10 + 每1万米 12点
+       baseVal = 10 * diffFactor;
+       growthVal = dist * 0.0012 * diffFactor; 
+    } else {
+       // 射速：基础 0.5 + 每1万米 0.8点 (原计划1.0，微调防止过快)
+       baseVal = 0.5 * diffFactor;
+       growthVal = dist * 0.00008 * diffFactor;
+    }
+
+    // 最终正值，带有 -20% ~ +20% 的随机浮动
+    const targetPositiveValue = (baseVal + growthVal) * (0.8 + Math.random() * 0.4);
+    
+    // 初始负值：设为目标正值的 -40% ~ -80%，保证需要一定时间打正
+    const initialValue = -(targetPositiveValue * (0.4 + Math.random() * 0.4));
+    
+    // 进化速度计算
+    // 目标：1.5 秒内打正 (屏幕停留时间约 2.8s，需留出余量)
+    // 进化增量 = |initialValue| / (PPS * 1.5)
+    // 关键修正：游戏引擎每帧最多射击一次(60FPS)，因此实际射速无法超过60
+    // 计算需求量时必须封顶，否则当面板射速>60时，门会变得由硬导致无法在离屏前打正
+    const currentStats = statsRef.current;
+    const effectiveFireRate = Math.min(60, currentStats.fireRate);
+    const totalPPS = effectiveFireRate * currentStats.projectileCount;
+    const safePPS = Math.max(1, totalPPS);
+    
+    // Gate 进化逻辑为每一发子弹增加 value
+    // 这里计算每发子弹应该增加多少 value
+    const evolutionSpeed = Math.abs(initialValue) / (safePPS * 1.5);
 
     return {
       id: `gate-${side}-${Math.random()}`,
@@ -168,7 +201,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
       height: 110,
       type: 'GATE_NEG',
       statType: stat,
-      value: initialPct,
+      value: parseFloat(initialValue.toFixed(2)),
+      evolutionSpeed: parseFloat(evolutionSpeed.toFixed(4)),
       pairId
     };
   };
@@ -206,7 +240,18 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
           if (rarityRoll > 0.96) { tier = 4; baseHp = 500; speedMult = 0.5; }
           else if (rarityRoll > 0.85) { tier = 2; baseHp = 120; speedMult = 1.3; }
 
-          const hp = Math.max(1, Math.floor(baseHp * (1 + state.distanceTraveled / 50000) * getDifficultyFactor()));
+          // 核心重构：怪物血量成长公式
+          // 采用轻微指数增长以对抗玩家的加法成长
+          // Base * (1 + (Distance/8000)^1.1)
+          const distFactor = Math.max(0, state.distanceTraveled);
+          const diffMult = getDifficultyFactor(); // 0.4, 1.0, 2.8 (原函数) -> 注意这里用了原函数的系数，可能过大，需检查
+          // 原 getDifficultyFactor 是 Easy 0.4, Normal 1.0, Hard 2.8
+          // 我们新计划里是 Easy 0.6, Hard 1.5。为了统一，这里手动计算
+          const standardDiffMult = difficulty === Difficulty.HARD ? 1.5 : (difficulty === Difficulty.EASY ? 0.6 : 1.0);
+          
+          let hpMultiplier = 1 + Math.pow(distFactor / 8000, 1.1);
+          
+          const hp = Math.max(1, Math.floor(baseHp * hpMultiplier * standardDiffMult));
           const size = Math.min(120, 50 + (Math.log10(hp + 1) * 12)); 
           
           newEntities.push({
@@ -404,19 +449,41 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
             } else if (e.type.startsWith('GATE')) {
               b.hitEntityIds.add(e.id);
               state.hitGateIdsThisFrame.add(e.id);
+              // 直接在此处应用增量，响应每一发子弹
+              if (e.evolutionSpeed) {
+                 e.value = (e.value || 0) + e.evolutionSpeed;
+              }
             }
           }
         });
       });
       state.bullets = state.bullets.filter(b => b.active);
 
-      state.entities.forEach(e => {
-        // 核心修改：门数值增长与帧率挂钩，解除射速/弹道数的影响
-        if (e.type.startsWith('GATE') && state.hitGateIdsThisFrame.has(e.id) && e.value !== undefined) {
-          e.value += getGateEvolutionRate();
+      for (const e of state.entities) {
+        // Gate Evolution Logic
+        // 移除冷却限制，改用预计算的 normalized 增量
+        if (e.type.startsWith('GATE') && state.hitGateIdsThisFrame.has(e.id) && e.value !== undefined && e.evolutionSpeed !== undefined) {
+             // 本帧命中次数。因为 hitGateIdsThisFrame 是Set，只知道"这帧被打了"，具体次数需要计数吗？
+             // 为了性能，之前移除了 gateHitCounts。
+             // 但这里如果不计数，高射速(一帧多次命中)和低射速(一帧一次)的差距会被抹平。
+             // 之前的逻辑是"hitGateIdsThisFrame.has" -> 该帧至少命中一次。
+             // 如果我们希望"射速"完全生效，应该恢复计数逻辑，或者近似处理：
+             // 实际上，bullet遍历时记录了 `hitGateIdsThisFrame`。
+             // 如果要精确对应每发子弹，我们需要回退到在 bullet loop 里直接应用效果，或者维护计数 Map。
+             // 考虑到"频率锁定"是被废弃的方案，我们现在需要"每发子弹都算"。
+             // 但为了避免遍历 entity loop 时不知道命中了几次，最好在 bullet loop 里直接增加 value。
+             // 不过，为了保持代码结构，我们可以在 bullet loop 里只标记，这里再增加。
+             // 既然 bullet loop 里已经 filter 了，我们在那里其实更好操作。
+             // 暂时折衷：在 bullet loop 里，每次 hit，直接 update entity value。
+             // 那么这里的逻辑应该删掉，或者改为处理类型的翻转。
+        }
+        // 由于上述原因，Gate更新逻辑将移回 bullet loop (下方409行附近处理)，
+        // 这里仅负责状态翻转 check
+        if (e.type.startsWith('GATE') && e.value !== undefined) {
           if (e.value >= 0) e.type = 'GATE_POS'; else e.type = 'GATE_NEG';
         }
 
+        // Entity Movement & Updates
         if (e.type === 'BOSS') {
           if (e.y < 120) e.y += 2;
           e.x += Math.sin(Date.now() / 800) * 4;
@@ -436,10 +503,12 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
           e.y += effectiveScroll + (e.type === 'ENEMY' ? (e.speed || 0) : 0);
         }
 
+        // Loot Attraction
         if (e.type === 'LOOT' && Math.sqrt((state.playerX - (e.x+20))**2 + (state.playerY - (e.y+20))**2) < 250) {
            e.x += (state.playerX - (e.x+20)) * 0.2; e.y += (state.playerY - (e.y+20)) * 0.2;
         }
 
+        // Player Collision
         if (state.playerX + 20 > e.x && state.playerX - 20 < e.x + e.width && state.playerY + 20 > e.y && state.playerY - 20 < e.y + e.height) {
           if (e.type === 'ENEMY' || e.type === 'CHEST' || e.type === 'BOSS') {
             takeDamage(1); if (e.type === 'ENEMY') e.y = 10000;
@@ -454,7 +523,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
             }
           }
         }
-      });
+      }
       state.entities = state.entities.filter(e => e.y < CANVAS_HEIGHT + 200);
 
       if (state.distanceTraveled > state.nextEntitySpawn && !state.bossFightActive) {
@@ -514,11 +583,13 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
            ctx.fillStyle = grd; ctx.fillRect(e.x, e.y, e.width, e.height);
            ctx.strokeStyle = isPos ? COLORS.CYAN : COLORS.NEON_RED; ctx.lineWidth = 2; ctx.strokeRect(e.x, e.y, e.width, e.height);
            ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = '900 14px Rajdhani';
-           ctx.fillText(e.statType === 'fireRate' ? '射速加成' : '威力加成', e.x + e.width/2, e.y + 30);
+           ctx.fillText(e.statType === 'fireRate' ? '射速' : '威力', e.x + e.width/2, e.y + 30);
            ctx.font = '900 32px Rajdhani';
            const val = e.value!;
-           const displayVal = (val * 100).toFixed(1) + '%';
-           ctx.fillText(`${val >= 0 ? '+' : ''}${displayVal}`, e.x + e.width/2, e.y + 75);
+           // 显示具体数值而非百分比
+           const displayVal = Math.abs(val).toFixed(2);
+           const sign = val >= 0 ? '+' : '-';
+           ctx.fillText(`${sign}${displayVal}`, e.x + e.width/2, e.y + 75);
         } else if (e.type === 'LOOT') {
            ctx.shadowBlur = 20; ctx.shadowColor = COLORS.NEON_GREEN;
            ctx.fillStyle = COLORS.NEON_GREEN; ctx.beginPath(); ctx.arc(e.x+20, e.y+20, 10 + Math.sin(Date.now()/100)*3, 0, Math.PI*2); ctx.fill();
@@ -608,7 +679,27 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.restore();
     };
 
-    const loop = () => { update(); draw(); animationFrameId = requestAnimationFrame(loop); };
+    const FIXED_TIME_STEP = 1000 / 60;
+    let accumulatedTime = 0;
+    let lastTime = performance.now();
+
+    const loop = (timestamp: number) => {
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+      
+      // 避免后台挂起后回来由于 deltaTime 过大导致死循环
+      // 限制最大追赶时间为 0.2 秒 (约 12 帧)
+      accumulatedTime += Math.min(deltaTime, 200);
+
+      while (accumulatedTime >= FIXED_TIME_STEP) {
+        update();
+        accumulatedTime -= FIXED_TIME_STEP;
+      }
+
+      draw();
+      animationFrameId = requestAnimationFrame(loop);
+    };
+    
     animationFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrameId);
   }, [gameState, difficulty, isPaused, onXpGain, onGameOver, onScoreUpdate, onStatChange, onUpgradeTrigger, takeDamage, getDifficultyFactor]);
