@@ -401,10 +401,6 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
             } else if (e.type.startsWith('GATE')) {
               b.hitEntityIds.add(e.id);
               state.hitGateIdsThisFrame.add(e.id);
-              if (e.value !== undefined) {
-                e.value += getGateEvolutionRate();
-                if (e.value >= 0) e.type = 'GATE_POS'; else e.type = 'GATE_NEG';
-              }
             }
           }
         });
@@ -412,6 +408,12 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
       state.bullets = state.bullets.filter(b => b.active);
 
       state.entities.forEach(e => {
+        // 核心修改：门数值增长与帧率挂钩，解除射速/弹道数的影响
+        if (e.type.startsWith('GATE') && state.hitGateIdsThisFrame.has(e.id) && e.value !== undefined) {
+          e.value += getGateEvolutionRate();
+          if (e.value >= 0) e.type = 'GATE_POS'; else e.type = 'GATE_NEG';
+        }
+
         if (e.type === 'BOSS') {
           if (e.y < 120) e.y += 2;
           e.x += Math.sin(Date.now() / 800) * 4;
