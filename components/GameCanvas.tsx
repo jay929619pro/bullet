@@ -476,7 +476,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
 
       let bossEntity: Entity | null = null;
 
-      state.entities.forEach(e => {
+      for (const e of state.entities) {
         if (e.type === 'BOSS') {
            bossEntity = e;
            ctx.shadowBlur = 30; ctx.shadowColor = COLORS.NEON_RED;
@@ -531,7 +531,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
            ctx.textAlign = 'center';
            ctx.fillText(text, e.x + e.width/2, e.y + e.height/2 + (fontSize / 3));
         }
-      });
+      }
 
       if (bossEntity && bossEntity.health !== undefined && bossEntity.maxHealth !== undefined) {
          const barWidth = CANVAS_WIDTH * 0.8;
