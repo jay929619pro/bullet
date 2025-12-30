@@ -1,17 +1,31 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import GameCanvas from './components/GameCanvas';
-import { GameState, PlayerStats, UpgradeOption, Difficulty } from './types';
-import { INITIAL_STATS, UPGRADE_OPTIONS, getWeaponName, formatNum, COLORS } from './constants';
+import { GameState, PlayerStats, UpgradeOption, Difficulty, Rarity } from './types';
+import { INITIAL_PLAYER_STATS, getUpgradePool, getWeaponName, formatNum, COLORS } from './constants';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.START);
   const [difficulty, setDifficulty] = useState<Difficulty>(Difficulty.NORMAL);
-  const [stats, setStats] = useState<PlayerStats>(INITIAL_STATS);
+  const [stats, setStats] = useState<PlayerStats>(INITIAL_PLAYER_STATS);
   const [showUpgrades, setShowUpgrades] = useState(false);
   const [gameTime, setGameTime] = useState(0);
   const [currentUpgradeChoices, setCurrentUpgradeChoices] = useState<UpgradeOption[]>([]);
   const [highScore, setHighScore] = useState(() => Number(localStorage.getItem('bullet_evolve_hs')) || 0);
+
+  // Calculate effective stats (Base * Multiplier)
+  // This is what the game loop and UI should use
+  const effectiveStats = React.useMemo(() => ({
+    ...stats,
+    damage: Math.ceil(stats.damage * (stats.damageMultiplier || 1)),
+    fireRate: stats.fireRate * (stats.fireRateMultiplier || 1),
+    // Projectile count is additive in upgrades, so Base + GateBonus is already in stats.projectileCount?
+    // Wait, in my plan: Gates add to Base. Upgrades add to Multiplier?
+    // But Projectile Upgrade adds +1. Is that a multiplier? No, it's flat.
+    // So stats.projectileCount IS the effective count unless we have a multiplier.
+    // For now, assume projectile is flat.
+    projectileCount: stats.projectileCount
+  }), [stats]);
 
   useEffect(() => {
     let interval: number;
@@ -31,7 +45,7 @@ const App: React.FC = () => {
 
   const handleStart = (selectedDiff: Difficulty) => {
     setDifficulty(selectedDiff);
-    let startStats = { ...INITIAL_STATS };
+    let startStats = { ...INITIAL_PLAYER_STATS };
     if (selectedDiff === Difficulty.EASY) {
       startStats.damage = 40;
       startStats.fireRate = 7.0;
@@ -53,9 +67,7 @@ const App: React.FC = () => {
   };
 
   const triggerUpgradeChoice = useCallback(() => {
-    const choices = [...UPGRADE_OPTIONS]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 3);
+    const choices = getUpgradePool(3);
     setCurrentUpgradeChoices(choices);
     setShowUpgrades(true);
   }, []);
@@ -118,7 +130,7 @@ const App: React.FC = () => {
         <GameCanvas 
           gameState={gameState}
           difficulty={difficulty}
-          stats={stats}
+          stats={effectiveStats}
           isPaused={showUpgrades}
           onXpGain={handleXpGain}
           onStatChange={handleStatChange}
@@ -154,9 +166,9 @@ const App: React.FC = () => {
                 
                 <div className="flex gap-4">
                   {[
-                    { label: '威力', val: formatNum(stats.damage), color: 'text-cyan-400' },
-                    { label: '射速', val: stats.fireRate.toFixed(1), color: 'text-green-400' },
-                    { label: '弹道', val: stats.projectileCount.toFixed(1), color: 'text-purple-400' }
+                    { label: '威力', val: formatNum(effectiveStats.damage), color: 'text-cyan-400' },
+                    { label: '射速', val: effectiveStats.fireRate.toFixed(1), color: 'text-green-400' },
+                    { label: '弹道', val: effectiveStats.projectileCount.toFixed(1), color: 'text-purple-400' }
                   ].map(s => (
                     <div key={s.label} className="flex flex-col items-end">
                       <span className="text-[9px] text-slate-500 font-bold uppercase tracking-tighter">{s.label}</span>
@@ -207,13 +219,14 @@ const App: React.FC = () => {
                 <div>
                   <div className="text-[10px] text-slate-500 font-bold uppercase">当前耐久</div>
                   <div className="text-lg font-black text-red-500 font-mono">{stats.hp}/{stats.maxHp}</div>
+                  <div className="text-lg font-black text-red-500 font-mono">{effectiveStats.hp}/{effectiveStats.maxHp}</div>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 <div className="text-xl">✨</div>
                 <div>
                   <div className="text-[10px] text-slate-500 font-bold uppercase">弹道链路</div>
-                  <div className="text-lg font-black text-purple-400 font-mono">{stats.projectileCount.toFixed(1)}</div>
+                  <div className="text-lg font-black text-purple-400 font-mono">{effectiveStats.projectileCount.toFixed(1)}</div>
                 </div>
               </div>
             </div>
@@ -229,7 +242,7 @@ const App: React.FC = () => {
                   <div className="text-3xl group-hover:scale-125 transition-transform duration-300 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">{u.icon}</div>
                   <div className="text-left flex-1 min-w-0">
                     <div className="text-sm md:text-base font-bold text-slate-300 group-hover:text-white transition-colors tracking-tight leading-tight">
-                      {u.description(stats)}
+                      {u.description(effectiveStats)}
                     </div>
                   </div>
                   <div className="text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -11,16 +11,30 @@ export enum Difficulty {
   HARD = "HARD"
 }
 
+export enum Rarity {
+  COMMON = "common",
+  RARE = "rare",
+  EPIC = "epic",
+  LEGENDARY = "legendary"
+}
+
 export interface PlayerStats {
-  damage: number;
-  fireRate: number; // bullets per second
-  projectileCount: number;
-  level: number;
   score: number;
+  distanceTraveled: number;
+  level: number;
   xp: number;
   nextLevelXp: number;
+
+  // Base Stats (from Initial + Gates)
+  damage: number;
+  fireRate: number;
+  projectileCount: number;
   hp: number;
-  maxHp: number;
+  maxHp: number; // 3 hearts
+
+  // Multipliers (from Upgrades)
+  damageMultiplier: number; // Default 1.0, +0.1 means +10%
+  fireRateMultiplier: number; // Default 1.0
 }
 
 export interface Entity {
@@ -71,4 +85,5 @@ export interface UpgradeOption {
   description: (stats: PlayerStats) => string;
   impact: (stats: PlayerStats, context?: { gameTime: number }) => PlayerStats;
   icon: string;
+  rarity: Rarity; // Quality level
 }

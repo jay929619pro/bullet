@@ -157,8 +157,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
     // 并在下方重新调整数值分配
     const statTypes: ('fireRate' | 'damage' | 'projectileCount')[] = ['fireRate', 'damage', 'damage', 'fireRate', 'projectileCount']; // 20% 概率出弹道
     const stat = statTypes[Math.floor(Math.random() * statTypes.length)];
-    // 核心重构：Gate数值由距离线性决定 (Additive Growth)
-    // 不再根据玩家当前属性计算，切断滚雪球链路
+    // 核心重构：Gate数值由距离线性决定 (Base Growth)
     const dist = Math.max(0, stateRef.current.distanceTraveled);
     const diffFactor = difficulty === Difficulty.HARD ? 1.5 : (difficulty === Difficulty.EASY ? 0.6 : 1.0);
     
@@ -166,43 +165,39 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
     let growthVal = 0;
 
     if (stat === 'damage') {
-       // 攻击力：基础 10 + 每1万米 12点
-       baseVal = 10 * diffFactor;
-       growthVal = dist * 0.0012 * diffFactor; 
+       // 攻击力：大幅增强 (Base 20 + D*0.003)
+       baseVal = 20 * diffFactor;
+       growthVal = dist * 0.003 * diffFactor; 
     } else if (stat === 'fireRate') {
-       // 射速：大幅提升 (User Feedback: 之前太少)
-       // 旧: 1.2 + D*0.00025 -> 削弱至 1.0 + D*0.00015
-       // 3m (45k): 1.0 + 6.75 = 7.75 (比之前的 12.45 下降 40%)
-       baseVal = 1.0 * diffFactor;
-       growthVal = dist * 0.00015 * diffFactor;
+       // 射速：大幅增强 (Base 2.0 + D*0.0004)
+       baseVal = 2.0 * diffFactor;
+       growthVal = dist * 0.0004 * diffFactor;
     } else {
-       // 弹道：微量，作为稀有强力属性
-       // 基础 0.1 + 每1万米 0.02
-       // 3m (45k): 0.1 + 0.09 = +0.19
-       // 意味着需要吃 5-6 个门才能加 1 条弹道，非常合理
+       // 弹道：稀有掉落
        baseVal = 0.1 * diffFactor;
        growthVal = dist * 0.00002 * diffFactor;
     }
-
-    // 最终正值，带有 -20% ~ +20% 的随机浮动
+    
+    // 生成正值 (基础值)
     const targetPositiveValue = (baseVal + growthVal) * (0.8 + Math.random() * 0.4);
     
-    // 初始负值：设为目标正值的 -40% ~ -80%，保证需要一定时间打正
+    // 初始负值：标准逻辑，需要打正
     const initialValue = -(targetPositiveValue * (0.4 + Math.random() * 0.4));
-    
+    const targetTime = 1.5; // 标准 1.5秒打正
+
     // 进化速度计算
-    // 目标：1.5 秒内打正 (屏幕停留时间约 2.8s，需留出余量)
-    // 进化增量 = |initialValue| / (PPS * 1.5)
-    // 关键修正：游戏引擎每帧最多射击一次(60FPS)，因此实际射速无法超过60
-    // 计算需求量时必须封顶，否则当面板射速>60时，门会变得由硬导致无法在离屏前打正
+    // 注意：这里的 statsRef.current 已经是 effectiveStats (由 App 传入)
+    // 所以 effectiveFireRate 会包含乘区加成，计算出的 Gate 进化速度会随玩家变强而变快
+    // 这本身符合 RPG 逻辑（强者更强），但为了防止 Gate 变得脆如纸，
+    // 我们可能需要让 Gate 的血量也随距离膨胀？
+    // 暂时保持原样，让玩家享受“割草”门的感觉。
     const currentStats = statsRef.current;
     const effectiveFireRate = Math.min(60, currentStats.fireRate);
     const totalPPS = effectiveFireRate * currentStats.projectileCount;
     const safePPS = Math.max(1, totalPPS);
     
-    // Gate 进化逻辑为每一发子弹增加 value
-    // 这里计算每发子弹应该增加多少 value
-    const evolutionSpeed = Math.abs(initialValue) / (safePPS * 1.5);
+    // Gate 进化逻辑
+    const evolutionSpeed = Math.abs(initialValue) / (safePPS * targetTime);
 
     return {
       id: `gate-${side}-${Math.random()}`,
@@ -251,16 +246,14 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
           if (rarityRoll > 0.96) { tier = 4; baseHp = 500; speedMult = 0.5; }
           else if (rarityRoll > 0.85) { tier = 2; baseHp = 120; speedMult = 1.3; }
 
-          // 核心重构：怪物血量成长公式
-          // 采用轻微指数增长以对抗玩家的加法成长
-          // Base * (1 + (Distance/8000)^1.1)
+          // 核心重构：怪物血量成长公式 - RPG Mode
+          // 适配 (Base * Multiplier) 的二次方成长曲线
+          // 玩家战力 ~ Time^2 (Gate线性 * Upgrade线性)
+          // 怪物血量 ~ Dist^2.1 (略高于玩家，保持压力)
           const distFactor = Math.max(0, state.distanceTraveled);
-          const diffMult = getDifficultyFactor(); // 0.4, 1.0, 2.8 (原函数) -> 注意这里用了原函数的系数，可能过大，需检查
-          // 原 getDifficultyFactor 是 Easy 0.4, Normal 1.0, Hard 2.8
-          // 我们新计划里是 Easy 0.6, Hard 1.5。为了统一，这里手动计算
           const standardDiffMult = difficulty === Difficulty.HARD ? 1.5 : (difficulty === Difficulty.EASY ? 0.6 : 1.0);
           
-          let hpMultiplier = 1 + Math.pow(distFactor / 8000, 1.1);
+          let hpMultiplier = 1 + Math.pow(distFactor / 5000, 2.1);
           
           const hp = Math.max(1, Math.floor(baseHp * hpMultiplier * standardDiffMult));
           const size = Math.min(120, 50 + (Math.log10(hp + 1) * 12)); 

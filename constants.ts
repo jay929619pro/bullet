@@ -1,4 +1,4 @@
-import { PlayerStats, UpgradeOption } from "./types";
+import { PlayerStats, UpgradeOption, Rarity } from "./types";
 
 export const CANVAS_WIDTH = 400;
 export const CANVAS_HEIGHT = 700;
@@ -17,69 +17,122 @@ export const COLORS = {
   BG_LIGHT: "#1e1b4b"
 };
 
-export const INITIAL_STATS: PlayerStats = {
-  damage: 20,
-  fireRate: 5.0,
-  projectileCount: 1,
-  level: 1,
+// Initial Stats
+export const INITIAL_PLAYER_STATS: PlayerStats = {
   score: 0,
+  distanceTraveled: 0,
+  level: 1,
   xp: 0,
   nextLevelXp: 100,
+
+  // Base Stats
+  damage: 10,
+  fireRate: 5,
+  projectileCount: 1,
   hp: 3,
-  maxHp: 3
+  maxHp: 3,
+
+  // Multipliers
+  damageMultiplier: 1.0,
+  fireRateMultiplier: 1.0
 };
 
-const DMG_PCT = 0.5; // 50%
-const FR_PCT = 0.45; // 45%
+// Rarity Definitions
+const RARITY_WEIGHTS = {
+  [Rarity.COMMON]: 60,
+  [Rarity.RARE]: 30,
+  [Rarity.EPIC]: 9,
+  [Rarity.LEGENDARY]: 1
+};
 
-// Additive Upgrade Logic
-// Base strength ≈ 3-4x Gate Strength
-export const UPGRADE_OPTIONS: UpgradeOption[] = [
-  {
-    id: "fr_add",
-    name: "射频过载",
-    // 修复：描述与实际逻辑一致，且大幅下调数值
-    // 3 mins (180s) -> 0.5 + 1.8 = +2.3 (原计划 +6.0，削弱 60%)
-    description: s => `射速大幅提升`,
-    icon: "⚡",
-    impact: (s, ctx) => {
-      const time = ctx?.gameTime || 0;
-      // 为了让 description 能访问到 time，我们其实很难直接在 description 里拿到 context。
-      // 这里是个 bug，description 只能拿到 stats。
-      // 既然如此，我们写死一个更模糊但安全的描述，或者把 time 存入 stats (不推荐乱改结构)。
-      // 暂时改为通用描述，避免误导。
-      // Formula: Base 0.5 + Time * 0.01
-      const bonus = 0.5 + time * 0.01;
-      return { ...s, fireRate: s.fireRate + bonus };
+const RARITY_CONFIG = {
+  [Rarity.COMMON]: { color: "#a0aec0", label: "普通", multiplier: 0.1 }, // +10%
+  [Rarity.RARE]: { color: "#4299e1", label: "稀有", multiplier: 0.25 }, // +25%
+  [Rarity.EPIC]: { color: "#9f7aea", label: "史诗", multiplier: 0.5 }, // +50%
+  [Rarity.LEGENDARY]: { color: "#ed8936", label: "传说", multiplier: 1.0 } // +100%
+};
+
+// Upgrade Templates
+// Instead of static options, we generate them based on rarity
+export const getUpgradePool = (count: number = 3): UpgradeOption[] => {
+  const options: UpgradeOption[] = [];
+
+  for (let i = 0; i < count; i++) {
+    // 1. Roll Rarity
+    const roll = Math.random() * 100;
+    let rarity = Rarity.COMMON;
+    if (roll > 98) rarity = Rarity.LEGENDARY; // 2%
+    else if (roll > 90) rarity = Rarity.EPIC; // 8%
+    else if (roll > 60) rarity = Rarity.RARE; // 30%
+
+    // Default config if not found (fallback)
+    const config = RARITY_CONFIG[rarity] || RARITY_CONFIG[Rarity.COMMON];
+
+    // 2. Roll Type (Damage, FireRate, Utility)
+    const typeRoll = Math.random();
+    let option: UpgradeOption;
+
+    if (typeRoll < 0.4) {
+      // 40% Damage (Attack Modchip)
+      const bonusPct = Math.round(config.multiplier * 100);
+      option = {
+        id: "dmg_" + Math.random().toString(36).substr(2, 9),
+        name: "攻击模组",
+        icon: "⚔️",
+        rarity,
+        description: () => `威力 +${bonusPct}% (当前 x${config.multiplier})`,
+        impact: s => ({
+          ...s,
+          damageMultiplier: (s.damageMultiplier || 1.0) + config.multiplier
+        })
+      };
+    } else if (typeRoll < 0.8) {
+      // 40% FireRate (Overclock Module)
+      const bonusPct = Math.round(config.multiplier * 100);
+      option = {
+        id: "fr_" + Math.random().toString(36).substr(2, 9),
+        name: "超频核心",
+        icon: "⚡",
+        rarity,
+        description: () => `射速 +${bonusPct}% (当前 x${config.multiplier})`,
+        impact: s => ({
+          ...s,
+          fireRateMultiplier: (s.fireRateMultiplier || 1.0) + config.multiplier
+        })
+      };
+    } else {
+      // 20% Special
+      if (Math.random() < 0.5) {
+        // Projectile
+        let cnt = 0.5;
+        if (rarity === Rarity.EPIC) cnt = 1;
+        if (rarity === Rarity.LEGENDARY) cnt = 2;
+
+        option = {
+          id: "pc_" + Math.random().toString(36).substr(2, 9),
+          name: "多重挂载",
+          icon: "🔱",
+          rarity,
+          description: () => `弹道 +${cnt} (额外分裂)`,
+          impact: s => ({ ...s, projectileCount: s.projectileCount + cnt })
+        };
+      } else {
+        // Heal
+        option = {
+          id: "hp_" + Math.random().toString(36).substr(2, 9),
+          name: "纳米修复",
+          icon: "❤️",
+          rarity,
+          description: () => `生命值 +1 (上限提升)`,
+          impact: s => ({ ...s, maxHp: s.maxHp + 1, hp: Math.min(s.maxHp + 1, s.hp + 1) })
+        };
+      }
     }
-  },
-  {
-    id: "dmg_add",
-    name: "贫铀弹头",
-    // 3 mins (180s) -> 15 + 108 = +123 (原计划 +300，削弱 60%)
-    description: s => `威力大幅提升`,
-    icon: "☢️",
-    impact: (s, ctx) => {
-      const time = ctx?.gameTime || 0;
-      const bonus = 15 + time * 0.6;
-      return { ...s, damage: Math.ceil(s.damage + bonus) };
-    }
-  },
-  {
-    id: "pc",
-    name: "同步链路",
-    description: () => "弹道充能 +25%",
-    icon: "🔱",
-    impact: s => ({ ...s, projectileCount: s.projectileCount + 0.25 })
-  },
-  {
-    id: "repair",
-    name: "紧急维护",
-    description: () => `生命上限 +1`,
-    icon: "🛠️",
-    impact: s => ({ ...s, maxHp: s.maxHp + 1, hp: s.hp + 1 })
+    options.push(option);
   }
-];
+
+  return options;
+};
 
 export const getWeaponName = (level: number) => {
   if (level < 5) return "Mk.I 原型机";
