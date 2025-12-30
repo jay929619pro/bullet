@@ -69,6 +69,6 @@ export interface UpgradeOption {
   id: string;
   name: string;
   description: (stats: PlayerStats) => string;
-  impact: (stats: PlayerStats) => PlayerStats;
+  impact: (stats: PlayerStats, context?: { gameTime: number }) => PlayerStats;
   icon: string;
 }

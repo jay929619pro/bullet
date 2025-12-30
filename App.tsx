@@ -62,7 +62,7 @@ const App: React.FC = () => {
 
   const selectUpgrade = (upgrade: UpgradeOption) => {
     setStats(prev => ({
-      ...upgrade.impact(prev),
+      ...upgrade.impact(prev, { gameTime }),
       level: prev.level + 1,
       xp: 0,
       nextLevelXp: Math.floor(prev.nextLevelXp * 1.35)
@@ -156,7 +156,7 @@ const App: React.FC = () => {
                   {[
                     { label: '威力', val: formatNum(stats.damage), color: 'text-cyan-400' },
                     { label: '射速', val: stats.fireRate.toFixed(1), color: 'text-green-400' },
-                    { label: '弹道', val: stats.projectileCount, color: 'text-purple-400' }
+                    { label: '弹道', val: stats.projectileCount.toFixed(1), color: 'text-purple-400' }
                   ].map(s => (
                     <div key={s.label} className="flex flex-col items-end">
                       <span className="text-[9px] text-slate-500 font-bold uppercase tracking-tighter">{s.label}</span>
@@ -213,7 +213,7 @@ const App: React.FC = () => {
                 <div className="text-xl">✨</div>
                 <div>
                   <div className="text-[10px] text-slate-500 font-bold uppercase">弹道链路</div>
-                  <div className="text-lg font-black text-purple-400 font-mono">{stats.projectileCount}</div>
+                  <div className="text-lg font-black text-purple-400 font-mono">{stats.projectileCount.toFixed(1)}</div>
                 </div>
               </div>
             </div>

@@ -153,7 +153,9 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
   };
 
   const generateRandomGate = (side: 'left' | 'right', y: number, pairId?: string): Entity => {
-    const statTypes: ('fireRate' | 'damage')[] = ['fireRate', 'damage'];
+    // 核心修改：加入 'projectileCount' 到门生成池
+    // 并在下方重新调整数值分配
+    const statTypes: ('fireRate' | 'damage' | 'projectileCount')[] = ['fireRate', 'damage', 'damage', 'fireRate', 'projectileCount']; // 20% 概率出弹道
     const stat = statTypes[Math.floor(Math.random() * statTypes.length)];
     // 核心重构：Gate数值由距离线性决定 (Additive Growth)
     // 不再根据玩家当前属性计算，切断滚雪球链路
@@ -167,10 +169,19 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
        // 攻击力：基础 10 + 每1万米 12点
        baseVal = 10 * diffFactor;
        growthVal = dist * 0.0012 * diffFactor; 
+    } else if (stat === 'fireRate') {
+       // 射速：大幅提升 (User Feedback: 之前太少)
+       // 旧: 1.2 + D*0.00025 -> 削弱至 1.0 + D*0.00015
+       // 3m (45k): 1.0 + 6.75 = 7.75 (比之前的 12.45 下降 40%)
+       baseVal = 1.0 * diffFactor;
+       growthVal = dist * 0.00015 * diffFactor;
     } else {
-       // 射速：基础 0.5 + 每1万米 0.8点 (原计划1.0，微调防止过快)
-       baseVal = 0.5 * diffFactor;
-       growthVal = dist * 0.00008 * diffFactor;
+       // 弹道：微量，作为稀有强力属性
+       // 基础 0.1 + 每1万米 0.02
+       // 3m (45k): 0.1 + 0.09 = +0.19
+       // 意味着需要吃 5-6 个门才能加 1 条弹道，非常合理
+       baseVal = 0.1 * diffFactor;
+       growthVal = dist * 0.00002 * diffFactor;
     }
 
     // 最终正值，带有 -20% ~ +20% 的随机浮动
@@ -383,7 +394,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
       const fireInterval = 1000 / statsRef.current.fireRate;
       if (now - state.lastShotTime > fireInterval) {
         state.lastShotTime = now;
-        const count = statsRef.current.projectileCount;
+        // 核心修改：支持小数弹道，向下取整
+        const count = Math.floor(statsRef.current.projectileCount);
         const spread = Math.min(240, (count - 1) * 30);
         for (let i = 0; i < count; i++) {
           const offsetX = count > 1 ? (i / (count - 1) - 0.5) * spread : 0;
@@ -583,7 +595,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
            ctx.fillStyle = grd; ctx.fillRect(e.x, e.y, e.width, e.height);
            ctx.strokeStyle = isPos ? COLORS.CYAN : COLORS.NEON_RED; ctx.lineWidth = 2; ctx.strokeRect(e.x, e.y, e.width, e.height);
            ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = '900 14px Rajdhani';
-           ctx.fillText(e.statType === 'fireRate' ? '射速' : '威力', e.x + e.width/2, e.y + 30);
+           const labelMap = { fireRate: '射速', damage: '威力', projectileCount: '弹道' };
+           ctx.fillText(labelMap[e.statType!] || '未知', e.x + e.width/2, e.y + 30);
            ctx.font = '900 32px Rajdhani';
            const val = e.value!;
            // 显示具体数值而非百分比
