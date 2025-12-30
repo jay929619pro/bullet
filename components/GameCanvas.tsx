@@ -81,12 +81,15 @@ const GameCanvas: React.FC<GameCanvasProps> = ({
    * 使用平滑曲线防止高难度下进化停滞
    */
   const getGateEvolutionRate = () => {
-    const baseRate = 0.015; // 提升基础增长率至 1.5%
+    // 核心数值调整：
+    // 由于修改了判定逻辑（从"每颗子弹触发"改为"每帧触发"），这里的基础数值需要大幅降低
+    // 原值 0.015 对应单发子弹增量
+    // 新值 0.003 对应单帧最大增量 (60FPS下，每秒最快与门互动60次，即每秒约增加 18%)
+    // 这样保证了即使后期射速极快，门的增长速度也有一个合理的物理上限
+    const baseRate = 0.003; 
     const factor = getDifficultyFactor();
     
-    // 如果直接用 baseRate / factor，炼狱难度 (2.8) 会变成 0.005
-    // 改用平滑公式：EASY(0.4) -> ~0.022, NORMAL(1.0) -> 0.015, HARD(2.8) -> ~0.0095
-    // 这样在炼狱难度，每发子弹依然有接近 1% 的增益，确保门能变绿
+    // 依然保留难度平滑逻辑，但在新基准下重新生效
     const dampenedFactor = factor > 1 ? 1 + (factor - 1) * 0.35 : 1 - (1 - factor) * 0.3;
     return baseRate / dampenedFactor;
   };
